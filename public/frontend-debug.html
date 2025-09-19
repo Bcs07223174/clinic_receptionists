@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .output { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Frontend Debug Tool</h1>
+    
+    <div class="section">
+        <h3>1. Login Test</h3>
+        <input type="email" id="email" placeholder="Email" value="adminareceptionist@medicare.com">
+        <input type="password" id="password" placeholder="Password" value="Admin#123">
+        <button onclick="testLogin()">Test Login</button>
+        <div id="loginOutput" class="output"></div>
+    </div>
+    
+    <div class="section">
+        <h3>2. LocalStorage Check</h3>
+        <button onclick="checkLocalStorage()">Check LocalStorage</button>
+        <div id="storageOutput" class="output"></div>
+    </div>
+    
+    <div class="section">
+        <h3>3. Appointments API Test</h3>
+        <input type="text" id="doctorId" placeholder="Doctor ID" value="68c1b0a8290666380fd5fa35">
+        <button onclick="testAppointments()">Test Appointments API</button>
+        <div id="appointmentsOutput" class="output"></div>
+    </div>
+
+    <script>
+        async function testLogin() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const output = document.getElementById('loginOutput');
+            
+            try {
+                output.innerHTML = 'Testing login...';
+                
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email, password }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store data like the real app does
+                    localStorage.setItem("receptionist", JSON.stringify(data.receptionist));
+                    localStorage.setItem("doctors", JSON.stringify(data.doctors));
+                    
+                    output.innerHTML = `
+                        <div class="success">Login successful!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    output.innerHTML = `<div class="error">Login failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                output.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+        
+        function checkLocalStorage() {
+            const output = document.getElementById('storageOutput');
+            
+            const receptionist = localStorage.getItem('receptionist');
+            const doctors = localStorage.getItem('doctors');
+            const user = localStorage.getItem('user');
+            
+            let html = '<h4>LocalStorage Contents:</h4>';
+            
+            if (receptionist) {
+                html += `<h5>Receptionist Data:</h5><pre>${receptionist}</pre>`;
+                const parsed = JSON.parse(receptionist);
+                html += `<h5>Doctor IDs:</h5><p>linkedDoctorIds: ${JSON.stringify(parsed.linkedDoctorIds)}</p>`;
+            }
+            
+            if (doctors) {
+                html += `<h5>Doctors Data:</h5><pre>${doctors}</pre>`;
+            }
+            
+            if (user) {
+                html += `<h5>User Data:</h5><pre>${user}</pre>`;
+            }
+            
+            if (!receptionist && !doctors && !user) {
+                html += '<p class="error">No data found in localStorage</p>';
+            }
+            
+            output.innerHTML = html;
+        }
+        
+        async function testAppointments() {
+            const doctorId = document.getElementById('doctorId').value;
+            const output = document.getElementById('appointmentsOutput');
+            
+            try {
+                output.innerHTML = 'Testing appointments API...';
+                
+                const response = await fetch(`/api/appointments?doctorId=${doctorId}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    output.innerHTML = `
+                        <div class="success">Appointments API successful!</div>
+                        <p>Found ${data.appointments ? data.appointments.length : 0} appointments</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    output.innerHTML = `<div class="error">API failed: ${data.error}</div>`;
+                }
+            } catch (error) {
+                output.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+        
+        // Auto-check localStorage on page load
+        window.onload = checkLocalStorage;
+    </script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quick Fix Test</title>
+</head>
+<body>
+    <h1>Quick Fix Test</h1>
+    <button onclick="setupAndTest()">Setup Data & Test Appointments</button>
+    <div id="result"></div>
+    
+    <script>
+        async function setupAndTest() {
+            const result = document.getElementById('result');
+            result.innerHTML = 'Setting up data...';
+            
+            try {
+                // 1. Login to get fresh data
+                const loginResponse = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: 'adminareceptionist@medicare.com',
+                        password: 'Admin#123'
+                    }),
+                });
+                
+                const loginData = await loginResponse.json();
+                
+                if (!loginResponse.ok) {
+                    result.innerHTML = 'Login failed: ' + loginData.error;
+                    return;
+                }
+                
+                // 2. Store data exactly like the real app
+                localStorage.setItem("receptionist", JSON.stringify(loginData.receptionist));
+                localStorage.setItem("doctors", JSON.stringify(loginData.doctors));
+                
+                // 3. Test the appointments fetch logic
+                const receptionist = JSON.parse(localStorage.getItem('receptionist'));
+                const doctorIds = receptionist.linkedDoctorIds || receptionist.linked_doctor_ids || [];
+                
+                if (doctorIds.length === 0) {
+                    result.innerHTML = 'No doctor IDs found in receptionist data!';
+                    return;
+                }
+                
+                const doctorId = doctorIds[0];
+                
+                // 4. Fetch appointments
+                const appointmentsResponse = await fetch(`/api/appointments?doctorId=${doctorId}`);
+                const appointmentsData = await appointmentsResponse.json();
+                
+                if (appointmentsResponse.ok) {
+                    result.innerHTML = `
+                        <h3>Success!</h3>
+                        <p>Found ${appointmentsData.appointments.length} appointments</p>
+                        <p>Doctor ID used: ${doctorId}</p>
+                        <p>Now you can visit <a href="/dashboard" target="_blank">Dashboard</a></p>
+                        <details>
+                            <summary>Full Data</summary>
+                            <pre>${JSON.stringify(appointmentsData, null, 2)}</pre>
+                        </details>
+                    `;
+                } else {
+                    result.innerHTML = 'Appointments fetch failed: ' + appointmentsData.error;
+                }
+                
+            } catch (error) {
+                result.innerHTML = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
