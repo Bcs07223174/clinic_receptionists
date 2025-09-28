@@ -118,51 +118,51 @@ export default function ProfileTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Profile</h1>
-          <p className="text-gray-600 mt-1">View your profile and linked doctor information</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Profile</h1>
+          <p className="text-sm sm:text-base text-gray-600 mt-1">View your profile and linked doctor information</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Receptionist Profile Card */}
         <Card className="bg-white border-0 shadow-md">
-          <CardHeader className="text-center">
+          <CardHeader className="text-center pb-4">
             <div className="flex justify-center mb-4">
-              <Avatar className="w-24 h-24">
+              <Avatar className="w-20 h-20 sm:w-24 sm:h-24">
                 <AvatarImage src="" alt={receptionist?.name || receptionist?.email || ""} />
-                <AvatarFallback className="text-xl bg-blue-100 text-blue-600">
+                <AvatarFallback className="text-lg sm:text-xl bg-blue-100 text-blue-600">
                   {receptionist?.name ? getInitials(receptionist.name) : receptionist?.email?.[0]?.toUpperCase() || "R"}
                 </AvatarFallback>
               </Avatar>
             </div>
-            <CardTitle className="text-xl">
+            <CardTitle className="text-lg sm:text-xl">
               {receptionist?.name || "Receptionist"}
             </CardTitle>
-            <Badge className="bg-green-100 text-green-800 border-green-200 w-fit mx-auto">
+            <Badge className="bg-green-100 text-green-800 border-green-200 w-fit mx-auto text-xs px-2 py-1">
               Receptionist
             </Badge>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center space-x-3 text-sm">
-              <Mail className="w-4 h-4 text-gray-400" />
-              <span className="text-gray-600">{receptionist?.email}</span>
+          <CardContent className="space-y-3 sm:space-y-4">
+            <div className="flex items-center space-x-3 text-xs sm:text-sm">
+              <Mail className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
+              <span className="text-gray-600 truncate">{receptionist?.email}</span>
             </div>
             {receptionist?.phone && (
-              <div className="flex items-center space-x-3 text-sm">
-                <Phone className="w-4 h-4 text-gray-400" />
+              <div className="flex items-center space-x-3 text-xs sm:text-sm">
+                <Phone className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
                 <span className="text-gray-600">{receptionist.phone}</span>
               </div>
             )}
             {receptionist?.joined_date && (
-              <div className="flex items-center space-x-3 text-sm">
-                <Calendar className="w-4 h-4 text-gray-400" />
+              <div className="flex items-center space-x-3 text-xs sm:text-sm">
+                <Calendar className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
                 <span className="text-gray-600">Joined {formatDate(receptionist.joined_date)}</span>
               </div>
             )}
             <Separator />
             <div className="text-center">
-              <p className="text-sm text-gray-500">Managing</p>
-              <p className="text-lg font-semibold text-blue-600">
+              <p className="text-xs sm:text-sm text-gray-500">Managing</p>
+              <p className="text-base sm:text-lg font-semibold text-blue-600">
                 {linkedDoctors.length} Doctor{linkedDoctors.length !== 1 ? 's' : ''}
               </p>
             </div>
@@ -172,71 +172,71 @@ export default function ProfileTab() {
         {/* Linked Doctors */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center space-x-2">
-            <Stethoscope className="w-5 h-5 text-blue-600" />
-            <h2 className="text-xl font-semibold text-gray-900">Linked Doctors</h2>
+            <Stethoscope className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Linked Doctors</h2>
           </div>
 
           {linkedDoctors.length === 0 ? (
             <Card className="bg-white border-0 shadow-md">
-              <CardContent className="p-12 text-center">
-                <Stethoscope className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No Linked Doctors</h3>
-                <p className="text-gray-600">No doctors are currently linked to your profile.</p>
+              <CardContent className="p-8 sm:p-12 text-center">
+                <Stethoscope className="w-10 h-10 sm:w-12 sm:h-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-base sm:text-lg font-medium text-gray-900 mb-2">No Linked Doctors</h3>
+                <p className="text-sm sm:text-base text-gray-600">No doctors are currently linked to your profile.</p>
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {linkedDoctors.map((doctor) => (
                 <Card key={doctor._id} className="bg-white border-0 shadow-md hover:shadow-lg transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-start space-x-4">
-                      <Avatar className="w-16 h-16">
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start space-y-4 sm:space-y-0 sm:space-x-4">
+                      <Avatar className="w-12 h-12 sm:w-16 sm:h-16 mx-auto sm:mx-0 flex-shrink-0">
                         <AvatarImage src="" alt={doctor.name} />
-                        <AvatarFallback className="text-lg bg-blue-100 text-blue-600">
+                        <AvatarFallback className="text-sm sm:text-lg bg-blue-100 text-blue-600">
                           {getInitials(doctor.name)}
                         </AvatarFallback>
                       </Avatar>
-                      <div className="flex-1 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900">{doctor.name}</h3>
+                      <div className="flex-1 space-y-2 sm:space-y-3 min-w-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <div className="text-center sm:text-left">
+                            <h3 className="text-base sm:text-lg font-semibold text-gray-900 truncate">{doctor.name}</h3>
                             {doctor.specialization && (
-                              <Badge className="bg-blue-100 text-blue-800 border-blue-200 mt-1">
+                              <Badge className="bg-blue-100 text-blue-800 border-blue-200 mt-1 text-xs px-2 py-1">
                                 {doctor.specialization}
                               </Badge>
                             )}
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
                           {doctor.email && (
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Mail className="w-4 h-4 text-gray-400" />
-                              <span>{doctor.email}</span>
+                            <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600">
+                              <Mail className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
+                              <span className="truncate">{doctor.email}</span>
                             </div>
                           )}
                           {doctor.phone && (
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Phone className="w-4 h-4 text-gray-400" />
+                            <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600">
+                              <Phone className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
                               <span>{doctor.phone}</span>
                             </div>
                           )}
                           {doctor.qualification && (
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <User className="w-4 h-4 text-gray-400" />
-                              <span>{doctor.qualification}</span>
+                            <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600">
+                              <User className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
+                              <span className="truncate">{doctor.qualification}</span>
                             </div>
                           )}
                           {doctor.experience && (
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Clock className="w-4 h-4 text-gray-400" />
+                            <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600">
+                              <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
                               <span>{doctor.experience}</span>
                             </div>
                           )}
                           {doctor.department && (
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <MapPin className="w-4 h-4 text-gray-400" />
-                              <span>{doctor.department}</span>
+                            <div className="flex items-center space-x-2 text-xs sm:text-sm text-gray-600">
+                              <MapPin className="w-3 h-3 sm:w-4 sm:h-4 text-gray-400 flex-shrink-0" />
+                              <span className="truncate">{doctor.department}</span>
                             </div>
                           )}
                         </div>

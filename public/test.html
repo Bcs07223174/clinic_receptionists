@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test Page</h1>
+    <button onclick="testHealth()">Test Health</button>
+    <button onclick="testLogin()">Test Login</button>
+    <div id="output"></div>
+
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(message) {
+            output.innerHTML += '<div>' + message + '</div>';
+        }
+        
+        async function testHealth() {
+            log('Testing health endpoint...');
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                log('✅ Health: ' + JSON.stringify(data, null, 2));
+            } catch (error) {
+                log('❌ Health error: ' + error.message);
+            }
+        }
+        
+        async function testLogin() {
+            log('Testing login endpoint...');
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: 'test@example.com',
+                        password: 'testpass'
+                    })
+                });
+                
+                log('Login status: ' + response.status);
+                const text = await response.text();
+                
+                if (text.startsWith('{')) {
+                    const data = JSON.parse(text);
+                    log('✅ Login response: ' + JSON.stringify(data, null, 2));
+                } else {
+                    log('❌ Non-JSON response: ' + text.substring(0, 200));
+                }
+            } catch (error) {
+                log('❌ Login error: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

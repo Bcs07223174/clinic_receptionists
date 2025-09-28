@@ -2,10 +2,13 @@
 
 # dependencies
 /node_modules
+/.pnp
+.pnp.js
 
 # next.js
 /.next/
 /out/
+.next
 
 # production
 /build
@@ -15,9 +18,17 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+lerna-debug.log*
+
+# runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
 
 # env files
 .env*
+.local
 
 # vercel
 .vercel
@@ -25,3 +36,53 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# testing
+/coverage
+/.nyc_output
+
+# temp files
+*.tmp
+*.temp
+/tmp/
+nul
+
+# logs
+logs
+*.log
+
+# cache directories
+.cache
+.parcel-cache
+.npm
+.eslintcache
+.stylelintcache
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# deployment helpers
+*.bat
+!start-dev.bat
+!dev.bat
+!build-fast.bat
+
+# test files
+test-*.js
+quick-test.js
+verify-*.js.vscode/
+node_modules/
+.vscode/
+node_modules/

@@ -1,0 +1,18 @@
+🚀 Starting Clinic Receptionist Development Server...
+
+📋 Available commands:
+  - pnpm run dev (normal start)
+  - start-dev.bat (auto-cleanup conflicting processes)
+
+⚠️ Port 3000 appears to be in use
+🔧 The server will automatically find an available port
+
+
+> my-v0-project@0.1.0 dev C:\Users\hissa\Downloads\clinic-receptionist
+> node server.js
+
+⚠️ Port 3000 is busy, using port 3001 instead
+🚀 Server ready on http://localhost:3001
+✅ WebSocket server initialized
+� Server running on port 3001 - you can access it at http://localhost:3001
+Terminate batch job (Y/N)? 

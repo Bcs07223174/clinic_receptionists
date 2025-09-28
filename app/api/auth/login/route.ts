@@ -1,99 +1,110 @@
-import { getDatabase } from "@/lib/mongodb"
-import { ObjectId } from "mongodb"
-import { type NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server";
+
+// Declare require for TypeScript
+declare const require: any;
+
+// Type definitions to avoid TypeScript errors
+interface ReceptionistDocument {
+  _id: any;
+  name: string;
+  email: string;
+  passwordHash: string;
+  linked_doctor_ids: string[];
+}
+
+interface DoctorDocument {
+  _id: any;
+  name: string;
+  specialization: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json()
+    // Import modules using require to avoid module resolution issues
+    const { ObjectId } = require("mongodb");
+    const { getDatabase } = require("../../../../lib/mongodb.js");
 
-    console.log("Login attempt with email:", email)
-    console.log("Login attempt with password:", password)
+    const { email, password } = await request.json();
 
     if (!email || !password) {
-      return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Email and password are required" },
+        { status: 400 }
+      );
     }
 
-    const db = await getDatabase()
-    const receptionistsCollection = db.collection("receptionists")
+    const db = await getDatabase();
+    const receptionistsCollection = db.collection("receptionists");
 
-    // First, let's see all receptionists for debugging
-    const allReceptionists = await receptionistsCollection.find({}).toArray()
-    console.log("All receptionists in database:", allReceptionists.map(r => ({
-      email: r.email, 
-      hasPasswordHash: !!r.passwordHash,
-      hasPassword: !!r.password,
-      linkedDoctorIds: r.linked_doctor_ids
-    })))
-
-    // Find receptionist by email and passwordHash
-    const receptionist = await receptionistsCollection.findOne({
+    // ✅ Find receptionist with passwordHash field
+    const receptionist: ReceptionistDocument = await receptionistsCollection.findOne({
       email: email,
-      passwordHash: password, // In production, use hashed passwords
-    })
-
-    console.log("Receptionist found with exact match:", !!receptionist)
+      passwordHash: password,
+    });
 
     if (!receptionist) {
-      // Try to find by email only to see if user exists
-      const receptionistByEmail = await receptionistsCollection.findOne({ email: email })
-      console.log("Receptionist exists with this email:", !!receptionistByEmail)
-      if (receptionistByEmail) {
-        console.log("But password doesn't match. Expected:", receptionistByEmail.passwordHash, "Got:", password)
-      }
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 })
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    // Get all linked doctors information
-    const doctorsCollection = db.collection("doctors")
-    let linkedDoctorIds = receptionist.linked_doctor_ids || [];
-    
-    console.log("Receptionist found:", receptionist.email)
-    console.log("Linked doctor IDs:", linkedDoctorIds)
+    // --- Fetch linked doctors ---
+    const doctorsCollection = db.collection("doctors");
+    const linkedDoctorIds = receptionist.linked_doctor_ids || [];
 
     if (linkedDoctorIds.length === 0) {
-      return NextResponse.json({ error: "No doctors linked to this receptionist" }, { status: 404 })
+      return NextResponse.json(
+        { error: "No doctors linked to this receptionist" },
+        { status: 404 }
+      );
     }
 
-    // Convert string ids to ObjectId if needed
-    const doctorObjectIds = linkedDoctorIds.map((id: any) => {
-      try {
-        return typeof id === 'string' ? new ObjectId(id) : id;
-      } catch (error) {
-        console.log("Failed to convert ID to ObjectId:", id, error)
-        return null;
-      }
-    }).filter((id: any) => id !== null);
-
-    console.log("Converted ObjectIds:", doctorObjectIds)
+    // Convert IDs to ObjectId safely
+    const doctorObjectIds = linkedDoctorIds
+      .map((id: any) => {
+        try {
+          return typeof id === "string" ? new ObjectId(id) : id;
+        } catch {
+          return null;
+        }
+      })
+      .filter((id: any) => id !== null);
 
     if (doctorObjectIds.length === 0) {
-      return NextResponse.json({ error: "Invalid doctor IDs format" }, { status: 400 })
+      return NextResponse.json(
+        { error: "Invalid doctor IDs format" },
+        { status: 400 }
+      );
     }
 
-    const doctors = await doctorsCollection.find({
-      _id: { $in: doctorObjectIds },
-    }).toArray();
+    const doctors: DoctorDocument[] = await doctorsCollection
+      .find({ _id: { $in: doctorObjectIds } })
+      .toArray();
 
-    console.log("Found doctors:", doctors.length)
+    // Generate session token
+    const sessionToken = `session_${receptionist._id}_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
 
-    // Return success even if no doctors found, with empty array
+    // ✅ Success
     return NextResponse.json({
       success: true,
+      sessionToken,
       receptionist: {
         id: receptionist._id,
         name: receptionist.name,
         email: receptionist.email,
         linkedDoctorIds: receptionist.linked_doctor_ids,
       },
-      doctors: doctors.map((doc: any) => ({
+      doctors: doctors.map((doc) => ({
         id: doc._id,
         name: doc.name,
         specialization: doc.specialization,
       })),
-      message: doctors.length === 0 ? "No doctors found for linked IDs" : undefined
-    })
+    });
   } catch (error) {
-    console.error("Login error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Login error:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

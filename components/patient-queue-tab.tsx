@@ -1,598 +1,620 @@
 "use client"
 
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { AlertCircle, Calendar, Clock, Hash, Search, User, UserCheck } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useWebSocket } from "@/hooks/use-websocket"
+import { AlertCircle, Clock, Search, Users, Wifi, WifiOff } from "lucide-react"
 import { useEffect, useState } from "react"
 
-interface PatientQueueEntry {
+interface QueueEntry {
   _id: string
-  appointmentKey: string
-  doctorId: string
-  patientId: string
-  doctorName: string
   patientName: string
-  sessionStartTime: string
-  status: "pending" | "confirmed" | "rejected"
-  queueStatus: "waiting" | "in-session" | "completed" | "cancelled"
+  doctorName: string
+  appointmentKey: string
   createdAt: string
-  updatedAt: string
+  status: string
+  queueStatus: string
+  doctorId: string
 }
 
 export default function PatientQueueTab() {
-  const [queueEntries, setQueueEntries] = useState<PatientQueueEntry[]>([])
-  const [filteredEntries, setFilteredEntries] = useState<PatientQueueEntry[]>([])
-  const [doctors, setDoctors] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [hasError, setHasError] = useState(false)
+  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>([])
+  const [filteredEntries, setFilteredEntries] = useState<QueueEntry[]>([])
+  const [statusFilter, setStatusFilter] = useState<string>("all")
   const [searchTerm, setSearchTerm] = useState("")
-  const [statusFilter, setStatusFilter] = useState<string>("confirmed") // Default to confirmed appointments
-  const [updatingKey, setUpdatingKey] = useState<string | null>(null)
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const [retryCount, setRetryCount] = useState(0)
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
-  const [debugInfo, setDebugInfo] = useState<any>(null)
-  const [showDebug, setShowDebug] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [hasError, setHasError] = useState(false)
 
+  const [doctorIds, setDoctorIds] = useState<string[]>([])
+  const [doctors, setDoctors] = useState<{ _id: string; name: string }[]>([])
+  const [selectedDoctor, setSelectedDoctor] = useState<string>("")
+
+  // Load filter preferences from localStorage
   useEffect(() => {
-    // Add a small delay to ensure localStorage is populated after login
-    const timer = setTimeout(() => {
-      fetchPatientQueue()
-    }, 100)
+    const savedFilters = localStorage.getItem('patientQueueFilters');
+    if (savedFilters) {
+      try {
+        const filters = JSON.parse(savedFilters);
+        const savedAt = new Date(filters.savedAt);
+        const hoursSinceLastSave = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
+        
+        // Only load filters if they're less than 24 hours old
+        if (hoursSinceLastSave < 24) {
+          setStatusFilter(filters.statusFilter || "all");
+          setSearchTerm(filters.searchTerm || "");
+          
+          // Load doctor selection with validation
+          const savedDoctor = filters.selectedDoctor || "all";
+          setSelectedDoctor(savedDoctor);
+          
+          console.log('✅ Loaded saved queue filters from', savedAt.toLocaleString());
+          console.log('📋 Restored filters:', {
+            status: filters.statusFilter || "all",
+            search: filters.searchTerm || "(empty)",
+            doctor: savedDoctor === "all" ? "All Doctors" : `Doctor ID: ${savedDoctor}`
+          });
+        } else {
+          // Clear old filters
+          localStorage.removeItem('patientQueueFilters');
+          console.log('🕒 Cleared outdated queue filters');
+        }
+      } catch (error) {
+        console.error('Error loading saved queue filters:', error);
+        localStorage.removeItem('patientQueueFilters');
+      }
+    }
+  }, []);
+
+  // Save filter preferences to localStorage
+  const saveFiltersToStorage = (status: string, search: string, doctor: string) => {
+    try {
+      const filters = {
+        statusFilter: status,
+        searchTerm: search,
+        selectedDoctor: doctor,
+        savedAt: new Date().toISOString()
+      };
+      localStorage.setItem('patientQueueFilters', JSON.stringify(filters));
+      console.log('💾 Queue filters saved to localStorage');
+    } catch (error) {
+      console.error('Error saving queue filters:', error);
+    }
+  };
+
+  // Enhanced setters that save to localStorage
+  const updateStatusFilter = (value: string) => {
+    setStatusFilter(value);
+    saveFiltersToStorage(value, searchTerm, selectedDoctor);
+  };
+
+  const updateSearchTerm = (value: string) => {
+    setSearchTerm(value);
+    saveFiltersToStorage(statusFilter, value, selectedDoctor);
+  };
+
+  const updateSelectedDoctor = (value: string) => {
+    console.log('👨‍⚕️ Doctor selection changed to:', value);
+    setSelectedDoctor(value);
+    saveFiltersToStorage(statusFilter, searchTerm, value);
     
-    return () => clearTimeout(timer)
+    // Additional feedback for doctor selection
+    if (value === "all") {
+      console.log('📊 Viewing all doctors in queue');
+    } else {
+      const doctorName = doctors.find(d => d._id === value)?.name || 'Unknown Doctor';
+      console.log(`👩‍⚕️ Viewing queue for: ${doctorName} (ID: ${value})`);
+    }
+  };
+
+  // Clear all filters function
+  const clearAllFilters = () => {
+    setStatusFilter("all");
+    setSearchTerm("");
+    setSelectedDoctor("all");
+    try {
+      localStorage.removeItem('patientQueueFilters');
+    } catch (error) {
+      console.error('Error clearing queue filters:', error);
+    }
+  };
+
+  // ✅ Load doctors from localStorage and API
+  const loadDoctors = async () => {
+    let loadedDoctors: { _id: string; name: string }[] = []
+    let doctorIds: string[] = []
+    
+    // Try to get from receptionist data first (most reliable)
+    const receptionistData = localStorage.getItem("receptionist")
+    if (receptionistData && receptionistData !== "undefined") {
+      try {
+        const receptionist = JSON.parse(receptionistData)
+        const linkedDoctorIds = receptionist.linkedDoctorIds || receptionist.linked_doctor_ids || []
+        if (linkedDoctorIds.length > 0) {
+          doctorIds = linkedDoctorIds.map((id: any) => typeof id === 'string' ? id : id.toString())
+        }
+      } catch (e) {
+        console.error("Error parsing receptionist data:", e)
+      }
+    }
+
+    // Get doctor names from localStorage or API
+    const doctorsData = localStorage.getItem("doctors")
+    if (doctorsData && doctorsData !== "undefined") {
+      try {
+        const allDoctors = JSON.parse(doctorsData)
+        if (Array.isArray(allDoctors) && allDoctors.length > 0) {
+          // Filter doctors by linked IDs if available
+          if (doctorIds.length > 0) {
+            loadedDoctors = allDoctors.filter((doc: any) => 
+              doctorIds.includes(doc._id)
+            )
+          } else {
+            loadedDoctors = allDoctors
+            doctorIds = allDoctors.map((doc: any) => doc._id)
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing doctors data:", e)
+      }
+    }
+
+    // Fallback to API if no doctors found
+    if (loadedDoctors.length === 0) {
+      try {
+        const res = await fetch("/api/doctors")
+        const data = await res.json()
+        if (res.ok && data.doctors) {
+          loadedDoctors = data.doctors
+          doctorIds = data.doctors.map((doc: any) => doc._id)
+        }
+      } catch (error) {
+        console.error("Failed to fetch doctors:", error)
+      }
+    }
+
+    // If still no names, create basic objects from IDs
+    if (loadedDoctors.length === 0 && doctorIds.length > 0) {
+      loadedDoctors = doctorIds.map((id, index) => ({
+        _id: id,
+        name: `Doctor ${index + 1} (${id.slice(-6)})`
+      }))
+    }
+
+    console.log("Patient Queue - Doctors loaded:", loadedDoctors)
+    setDoctors(loadedDoctors)
+    setDoctorIds(doctorIds)
+    
+    if (loadedDoctors.length > 0) {
+      setSelectedDoctor("all") // default to all doctors
+    }
+  }
+
+  // ✅ Load doctors on component mount
+  useEffect(() => {
+    loadDoctors()
   }, [])
 
-  // Auto-refresh every 5 seconds for continuous updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!isLoading && !hasError) {
-        fetchPatientQueue()
-      }
-    }, 5000) // Refresh every 5 seconds
+  // ✅ Fetch queue for selected doctor
+  const fetchPatientQueue = async (isBackgroundRefresh = false) => {
+    if (!selectedDoctor) {
+      console.log("Patient Queue - No doctor selected")
+      return
+    }
 
-    return () => clearInterval(interval)
-  }, [isLoading, hasError])
-
-  useEffect(() => {
-    filterEntries()
-  }, [queueEntries, searchTerm, statusFilter])
-
-  const fetchPatientQueue = async () => {
     try {
-      setIsLoading(true)
+      if (!isBackgroundRefresh) {
+        setIsLoading(true)
+      } else {
+        setIsRefreshing(true)
+      }
       setHasError(false)
 
-      console.log("=== FETCH PATIENT QUEUE DEBUG ===")
-      
-      // Try both storage patterns for compatibility
-      let user = localStorage.getItem('user')
-      let receptionist = localStorage.getItem('receptionist')
-      
-      console.log("Raw user from localStorage:", user)
-      console.log("Raw receptionist from localStorage:", receptionist)
-      
-      let parsedUser = null
-      
-      if (receptionist) {
-        // New format: separate receptionist data
-        parsedUser = JSON.parse(receptionist)
-        console.log("Using receptionist data:", parsedUser)
-      } else if (user) {
-        // Old format: combined user data
-        parsedUser = JSON.parse(user)
-        console.log("Using user data:", parsedUser)
+      let allQueueEntries: QueueEntry[] = []
+
+      if (selectedDoctor === "all") {
+        // Fetch queue for all linked doctors
+        console.log("Patient Queue - Fetching for all doctors")
+        const promises = doctors.map(async (doctor) => {
+          try {
+            const response = await fetch(`/api/patient-queue?doctorId=${doctor._id}`)
+            if (response.ok) {
+              const data = await response.json()
+              return data?.patientQueue || []
+            }
+            return []
+          } catch (error) {
+            console.error(`Failed to fetch queue for doctor ${doctor._id}:`, error)
+            return []
+          }
+        })
+
+        const results = await Promise.all(promises)
+        allQueueEntries = results.flat()
       } else {
-        console.log("No user data found in localStorage")
-        
-        // Retry logic - if this is the first few attempts and we're likely just after login
-        if (retryCount < 3) {
-          console.log(`Retrying in 500ms... (attempt ${retryCount + 1}/3)`)
-          setRetryCount(retryCount + 1)
-          setTimeout(() => {
-            fetchPatientQueue()
-          }, 500)
-          return
+        // Fetch queue for specific doctor
+        console.log("Patient Queue - Fetching for doctor:", selectedDoctor)
+        const response = await fetch(`/api/patient-queue?doctorId=${selectedDoctor}`)
+
+        console.log("Patient Queue - Response status:", response.status)
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error("Patient Queue - API error:", response.status, errorText)
+          throw new Error(`API failed: ${response.status} - ${errorText}`)
         }
-        
-        console.log("Max retries reached, showing error")
-        setHasError(true)
-        return
-      }
-      
-      // Try both field names for compatibility
-      const doctorIds = parsedUser.linkedDoctorIds || parsedUser.linked_doctor_ids || []
-      console.log("Doctor IDs from user:", doctorIds)
-      console.log("Available fields:", Object.keys(parsedUser))
 
-      // Validate doctorIds array and its contents
-      const validDoctorIds = doctorIds.filter((id: any) => 
-        id && 
-        id !== 'undefined' && 
-        id !== 'null' && 
-        typeof id === 'string' && 
-        id.length === 24
-      )
-      
-      console.log("Valid doctor IDs after filtering:", validDoctorIds)
+        const data = await response.json()
+        console.log("Patient Queue - Data received:", data)
 
-      if (!validDoctorIds.length) {
-        console.log("No valid doctor IDs found for user")
-        
-        // Retry logic for missing doctor IDs
-        if (retryCount < 3) {
-          console.log(`No valid doctor IDs, retrying in 500ms... (attempt ${retryCount + 1}/3)`)
-          setRetryCount(retryCount + 1)
-          setTimeout(() => {
-            fetchPatientQueue()
-          }, 500)
-          return
-        }
-        
-        console.log("Max retries reached, no doctor IDs available")
-        setHasError(true)
-        return
+        allQueueEntries = data?.patientQueue || []
       }
 
-      const doctorId = validDoctorIds[0]
-      console.log("Using doctor ID:", doctorId)
-      
-      // Additional validation to prevent undefined doctorId
-      if (!doctorId || doctorId === 'undefined' || doctorId === 'null') {
-        console.log("Invalid doctor ID detected:", doctorId)
-        setHasError(true)
-        return
-      }
-      
-      const apiUrl = `/api/patient-queue?doctorId=${doctorId}`
-      console.log("API URL:", apiUrl)
-      
-      const response = await fetch(apiUrl)
-      console.log("Response status:", response.status)
-      console.log("Response ok:", response.ok)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.log("Error response:", errorText)
-        setHasError(true)
-        return
-      }
-
-      const data = await response.json()
-      console.log("Response data:", data)
-      
-      // Reset retry count on successful data retrieval
-      setRetryCount(0)
-      
-      if (data.patientQueue) {
-        console.log("Setting patient queue:", data.patientQueue.length, "entries")
-        setQueueEntries(data.patientQueue)
-        setLastUpdate(new Date())
-      } else {
-        console.log("No patient queue in response, setting empty array")
-        setQueueEntries([])
-        setLastUpdate(new Date())
-      }
+      setQueueEntries(allQueueEntries)
+      console.log("Patient Queue - Entries set:", allQueueEntries.length)
     } catch (error) {
-      console.error("Error fetching patient queue:", error)
-      setHasError(true)
+      console.error("❌ Failed to fetch patient queue:", error)
+      if (!isBackgroundRefresh) {
+        setHasError(true)
+      }
     } finally {
-      setIsLoading(false)
+      if (!isBackgroundRefresh) {
+        setIsLoading(false)
+      } else {
+        setIsRefreshing(false)
+      }
     }
   }
 
-  const filterEntries = () => {
+  // WebSocket integration for real-time queue updates
+  const { isConnected, isConnecting } = useWebSocket({
+    doctorId: selectedDoctor !== "all" ? selectedDoctor : undefined,
+    onQueueUpdate: (data: any) => {
+      console.log("📨 Real-time queue update received:", data);
+      
+      if (data.type === 'queue_updated') {
+        // Refresh queue data when updates are received
+        fetchPatientQueue(true);
+      }
+    },
+    autoConnect: true
+  });
+
+  // ✅ Initial load only - WebSocket handles real-time updates
+  useEffect(() => {
+    if (!selectedDoctor) return
+    fetchPatientQueue(false) // Initial load
+    // Remove polling interval - WebSocket provides real-time updates
+  }, [selectedDoctor])
+
+  // ✅ Filtering logic - Show only waiting patients and sort by time
+  useEffect(() => {
     let filtered = [...queueEntries]
 
-    // Only show confirmed appointments with waiting queue status
-    filtered = filtered.filter(entry => 
-      entry.status === "confirmed" && entry.queueStatus === "waiting"
+    // Filter to show only "waiting" queue status patients
+    filtered = filtered.filter((entry) => 
+      entry.queueStatus && entry.queueStatus.toLowerCase() === "waiting"
     )
 
+    // Apply additional status filter if selected
+    if (statusFilter && statusFilter !== "all") {
+      filtered = filtered.filter((entry) => entry.status === statusFilter)
+    }
+
+    // Apply search filter
     if (searchTerm) {
-      filtered = filtered.filter(entry =>
-        entry.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        entry.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        entry.appointmentKey.toLowerCase().includes(searchTerm.toLowerCase())
+      filtered = filtered.filter(
+        (entry) =>
+          entry.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          entry.doctorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          entry.appointmentKey.toLowerCase().includes(searchTerm.toLowerCase())
       )
     }
 
+    // Sort by creation time (oldest first - FIFO queue)
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.createdAt).getTime()
+      const dateB = new Date(b.createdAt).getTime()
+      return dateA - dateB // Oldest first
+    })
+
     setFilteredEntries(filtered)
-  }
-
-  const updateQueueStatus = async (appointmentKey: string, queueStatus: string) => {
-    try {
-      setUpdatingKey(appointmentKey)
-      
-      const response = await fetch('/api/patient-queue', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          appointmentKey,
-          queueStatus
-        }),
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setMessage({ type: "success", text: data.message })
-        fetchPatientQueue()
-      } else {
-        setMessage({ type: "error", text: "Failed to update queue status" })
-      }
-    } catch (error) {
-      console.error('Error updating queue status:', error)
-      setMessage({ type: "error", text: "Error updating queue status" })
-    } finally {
-      setUpdatingKey(null)
-    }
-  }
-
-  const runDiagnostic = async () => {
-    try {
-      const response = await fetch('/api/diagnostic')
-      if (response.ok) {
-        const data = await response.json()
-        setDebugInfo(data)
-        setShowDebug(true)
-        console.log("=== DIAGNOSTIC RESULTS ===", data)
-      }
-    } catch (error) {
-      console.error('Error running diagnostic:', error)
-    }
-  }
-
-  const getQueueStatusIcon = (queueStatus: string) => {
-    switch (queueStatus) {
-      case "in-session":
-        return <UserCheck className="w-5 h-5 text-sky-500" />
-      case "completed":
-        return <UserCheck className="w-5 h-5 text-emerald-500" />
-      case "cancelled":
-        return <AlertCircle className="w-5 h-5 text-rose-500" />
-      default:
-        return <Clock className="w-5 h-5 text-amber-500" />
-    }
-  }
-
-  const getQueueStatusColor = (queueStatus: string) => {
-    switch (queueStatus) {
-      case "in-session":
-        return "bg-sky-50 text-sky-700 border-sky-200"
-      case "completed":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200"
-      case "cancelled":
-        return "bg-rose-50 text-rose-700 border-rose-200"
-      default:
-        return "bg-amber-50 text-amber-700 border-amber-200"
-    }
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "confirmed":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200"
-      case "rejected":
-        return "bg-rose-50 text-rose-700 border-rose-200"
-      default:
-        return "bg-amber-50 text-amber-700 border-amber-200"
-    }
-  }
-
-  const formatTime = (timeString: string) => {
-    try {
-      if (!timeString) return "Invalid Time"
-      
-      // If already contains AM/PM, return as is
-      if (timeString.match(/[AP]M/i)) {
-        return timeString
-      }
-      
-      const timeParts = timeString.split(':')
-      if (timeParts.length >= 2) {
-        const hours = parseInt(timeParts[0])
-        const minutes = timeParts[1]
-        const period = hours >= 12 ? 'PM' : 'AM'
-        const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours
-        return `${displayHours}:${minutes} ${period}`
-      }
-      
-      return timeString
-    } catch (error) {
-      console.error("Error formatting time:", error, timeString)
-      return timeString
-    }
-  }
+  }, [statusFilter, searchTerm, queueEntries])
 
   const formatDate = (dateString: string) => {
     try {
-      if (!dateString) return "Invalid Date"
-      
       const dateObj = new Date(dateString)
-      if (isNaN(dateObj.getTime())) {
-        return "Invalid Date"
-      }
-      
-      return dateObj.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit"
+      if (isNaN(dateObj.getTime())) return "Invalid Date"
+      return dateObj.toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
       })
-    } catch (error) {
-      console.error("Error formatting date:", error, dateString)
+    } catch {
       return "Invalid Date"
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-10 bg-gray-200 rounded"></div>
-            ))}
-          </div>
-          <div className="space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-32 bg-gray-200 rounded"></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'confirmed': return 'bg-green-100 text-green-800 border-green-200';
+      case 'rejected': return 'bg-red-100 text-red-800 border-red-200';
+      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getQueueStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'waiting': return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'in-progress': return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'completed': return 'bg-green-100 text-green-800 border-green-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const LoadingSkeleton = () => (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {[1, 2, 3, 4, 5, 6].map(i => (
+        <Card key={i} className="w-full h-fit min-h-[240px] border-l-4 border-l-gray-300 relative">
+          {/* Skeleton Position Badge */}
+          <div className="absolute -top-2 -left-2 w-7 h-7 bg-gray-300 rounded-full"></div>
+          <CardHeader className="pb-3 pt-4">
+            <div className="flex justify-between items-start gap-2">
+              <Skeleton className="h-6 w-3/4" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3 pb-4">
+            <div className="space-y-3">
+              <div className="flex justify-between items-center py-1">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-24" />
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-6 w-20" />
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+              <div className="border-t pt-3">
+                <Skeleton className="h-4 w-full" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">Patient Queue</h1>
-          <p className="text-slate-600 mt-1">Live queue showing patients waiting for consultation</p>
-          <p className="text-sm text-slate-500 mt-1">
-            Last updated: {lastUpdate.toLocaleTimeString()} • Auto-refreshing every 5 seconds
-          </p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-1">
-            <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse"></div>
-            <span className="text-sm text-slate-600">Live</span>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Clock className="h-8 w-8 text-blue-600" />
+            {isRefreshing && (
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+            )}
           </div>
-          <Button
-            onClick={() => fetchPatientQueue()}
-            variant="outline"
-            size="sm"
-            disabled={isLoading}
-          >
-            {isLoading ? "Refreshing..." : "Refresh Now"}
-          </Button>
-          <Button
-            onClick={runDiagnostic}
-            variant="outline"
-            size="sm"
-            className="border-sky-200 text-sky-600 hover:bg-sky-50"
-          >
-            Debug System
-          </Button>
-        </div>
-      </div>
-
-      {hasError && (
-        <Alert className="border-rose-200 bg-rose-50">
-          <div className="flex items-center">
-            <AlertCircle className="w-5 h-5 text-rose-400 mr-3" />
-            <div>
-              <AlertDescription className="text-rose-700 font-medium">
-                Invalid doctor information detected. Unable to load patient queue.
-              </AlertDescription>
-              <p className="text-rose-600 text-sm mt-1">
-                This usually happens when you are not properly logged in or your session has expired.
-              </p>
-              <div className="flex space-x-3 mt-3">
-                <Button 
-                  onClick={() => window.location.href = '/api/auth/login'}
-                  className="bg-rose-500 hover:bg-rose-600 text-white text-sm px-4 py-2"
-                  size="sm"
-                >
-                  Re-login
-                </Button>
-                <Button 
-                  onClick={() => window.location.reload()}
-                  variant="outline"
-                  className="text-sm px-4 py-2"
-                  size="sm"
-                >
-                  Reload Page
-                </Button>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-gray-800">Waiting Queue</h1>
+              {isRefreshing && (
+                <span className="text-xs text-blue-600 font-medium">Updating...</span>
+              )}
+              {/* WebSocket Status Indicator */}
+              <div className="flex items-center gap-1">
+                {isConnected ? (
+                  <div title="WebSocket Connected - Real-time updates active">
+                    <Wifi className="h-4 w-4 text-green-600" />
+                  </div>
+                ) : isConnecting ? (
+                  <div title="Connecting to WebSocket...">
+                    <Wifi className="h-4 w-4 text-yellow-600 animate-pulse" />
+                  </div>
+                ) : (
+                  <div title="WebSocket Disconnected">
+                    <WifiOff className="h-4 w-4 text-red-600" />
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        </Alert>
-      )}
-
-      {!hasError && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mb-6">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input
-                placeholder="Search patients, doctors, or appointment key..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
+            <div className="flex items-center gap-4">
+              <p className="text-sm text-gray-600">
+                {filteredEntries.length} patient{filteredEntries.length !== 1 ? 's' : ''} waiting • Sorted by arrival time
+              </p>
+              {isConnected && (
+                <span className="text-xs text-green-600 font-medium">🔴 Live Updates</span>
+              )}
             </div>
           </div>
+        </div>
 
-          {message && (
-            <Alert className={message.type === "success" ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}>
-              <AlertDescription className={message.type === "success" ? "text-emerald-700" : "text-rose-700"}>
-                {message.text}
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          {showDebug && debugInfo && (
-            <Card className="border-sky-200 bg-sky-50">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-sky-800">System Diagnostic Results</h3>
-                  <Button
-                    onClick={() => setShowDebug(false)}
-                    variant="ghost"
-                    size="sm"
-                    className="text-sky-600 hover:text-sky-800"
-                  >
-                    ✕ Close
-                  </Button>
+        {/* Compact Doctor Selector */}
+        {doctors.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-gray-500" />
+            <Select value={selectedDoctor} onValueChange={updateSelectedDoctor}>
+              <SelectTrigger className="w-48 h-9 text-sm">
+                <SelectValue placeholder="Select doctor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-sm">
+                  <div className="flex flex-col">
+                    <span className="font-medium">All Doctors</span>
+                    <span className="text-xs text-gray-500">View all queues</span>
+                  </div>
+                </SelectItem>
+                {doctors.map((doc) => (
+                  <SelectItem key={doc._id} value={doc._id} className="text-sm">
+                    <div className="flex flex-col">
+                      <span className="font-medium">{doc.name}</span>
+                      <span className="text-xs text-gray-500">ID: {doc._id.slice(-6)}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedDoctor && selectedDoctor !== "all" && (
+              <span className="text-xs text-green-600 font-medium" title="Doctor selection saved to localStorage">💾</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Search and Filters */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        {/* Search */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by patient, doctor, or appointment key..."
+            value={searchTerm}
+            onChange={(e) => updateSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+
+        {/* Status Filter */}
+        <div className="w-full sm:w-48">
+          <Select value={statusFilter} onValueChange={updateStatusFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Filter by appointment status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="confirmed">Confirmed</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Clear Filters Button */}
+        {(statusFilter !== "all" || searchTerm || selectedDoctor !== "all") && (
+          <button
+            onClick={clearAllFilters}
+            className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md border border-gray-300 transition-colors flex items-center gap-1 whitespace-nowrap"
+            title="Clear all filters and reset to defaults"
+          >
+            <span className="text-xs">✕</span> Clear
+          </button>
+        )}
+      </div>
+
+      {/* Quick Filter Badges - Only for waiting patients */}
+      <div className="flex flex-wrap gap-2">
+        <Badge
+          variant={statusFilter === "all" || statusFilter === "" ? "default" : "outline"}
+          className="cursor-pointer hover:bg-blue-100 transition-colors"
+          onClick={() => updateStatusFilter("all")}
+        >
+          All Waiting ({filteredEntries.length})
+        </Badge>
+        <Badge
+          variant={statusFilter === "confirmed" ? "default" : "outline"}
+          className="cursor-pointer hover:bg-green-100 transition-colors"
+          onClick={() => updateStatusFilter("confirmed")}
+        >
+          Confirmed ({queueEntries.filter(e => e.queueStatus?.toLowerCase() === "waiting" && e.status === "confirmed").length})
+        </Badge>
+        <Badge
+          variant={statusFilter === "pending" ? "default" : "outline"}
+          className="cursor-pointer hover:bg-yellow-100 transition-colors"
+          onClick={() => updateStatusFilter("pending")}
+        >
+          Pending ({queueEntries.filter(e => e.queueStatus?.toLowerCase() === "waiting" && e.status === "pending").length})
+        </Badge>
+      </div>
+
+      {/* Loading */}
+      {isLoading && <LoadingSkeleton />}
+
+      {/* Error */}
+      {hasError && !isLoading && (
+        <Card className="w-full">
+          <CardContent className="py-16 text-center">
+            <AlertCircle className="mx-auto h-12 w-12 text-red-400 mb-4" />
+            <p className="text-red-600 font-medium text-lg">Failed to load patient queue</p>
+            <p className="text-red-400 text-sm mt-1">Please check your connection and try again.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* No data */}
+      {!isLoading && !hasError && filteredEntries.length === 0 && (
+        <Card className="w-full">
+          <CardContent className="py-16 text-center">
+            <Clock className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <p className="text-gray-500 font-medium text-lg">No patients waiting</p>
+            <p className="text-gray-400 text-sm mt-1">
+              {searchTerm || statusFilter !== "all"
+                ? "Try adjusting your search or filters" 
+                : "No patients in waiting queue for the selected doctor"
+              }
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Queue List */}
+      {!isLoading && !hasError && filteredEntries.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredEntries.map((entry, index) => (
+            <Card key={entry._id} className="shadow-sm hover:shadow-md transition-all duration-200 relative h-fit min-h-[240px] border-l-4 border-l-blue-500">
+              {/* Queue Position Badge */}
+              <div className="absolute -top-2 -left-2 bg-blue-600 text-white text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center z-10 shadow-md">
+                #{index + 1}
+              </div>
+              <CardHeader className="pb-3 pt-4">
+                <div className="flex justify-between items-start gap-2">
+                  <CardTitle className="text-lg font-semibold leading-tight text-gray-800 truncate">
+                    {entry.patientName}
+                  </CardTitle>
+                  <div className="flex flex-col gap-1 flex-shrink-0">
+                    <Badge 
+                      className={`${getStatusColor(entry.status)} text-xs px-2 py-1 whitespace-nowrap font-medium`}
+                      variant="outline"
+                    >
+                      {entry.status}
+                    </Badge>
+                  </div>
                 </div>
-                
-                <div className="space-y-4 text-sm">
-                  <div>
-                    <h4 className="font-medium text-sky-700">Receptionist Info:</h4>
-                    <p>Email: {debugInfo.receptionist?.email}</p>
-                    <p>Linked Doctor IDs: {JSON.stringify(debugInfo.receptionist?.linked_doctor_ids || debugInfo.receptionist?.linkedDoctorIds)}</p>
-                    <p>Has Linked Doctors: {debugInfo.receptionist?.hasLinkedDoctors ? "Yes" : "No"}</p>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm pb-4">
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center py-1">
+                    <span className="font-medium text-gray-700">Doctor:</span>
+                    <span className="text-gray-600 truncate ml-2 max-w-[140px]" title={entry.doctorName}>
+                      {entry.doctorName}
+                    </span>
                   </div>
-                  
-                  <div>
-                    <h4 className="font-medium text-sky-700">Available Doctors ({debugInfo.doctors?.length || 0}):</h4>
-                    {debugInfo.doctors?.slice(0, 3).map((doctor: any) => (
-                      <p key={doctor.id}>• {doctor.name} (ID: {doctor.id})</p>
-                    ))}
+                  <div className="flex justify-between items-center py-1">
+                    <span className="font-medium text-gray-700">Appointment:</span>
+                    <span className="text-gray-600 font-mono text-xs bg-gray-50 px-2 py-1 rounded border">
+                      {entry.appointmentKey}
+                    </span>
                   </div>
-                  
-                  <div>
-                    <h4 className="font-medium text-sky-700">Patient Queue Analysis:</h4>
-                    <p>Total Entries: {debugInfo.queueDoctorAnalysis?.totalEntries}</p>
-                    <p>Unique Doctor IDs: {debugInfo.queueDoctorAnalysis?.uniqueDoctorIds?.length}</p>
-                    <p>Doctor ID Formats: {JSON.stringify(debugInfo.queueDoctorAnalysis?.doctorIdFormats)}</p>
-                    <p>Matching Doctors: {debugInfo.queueDoctorAnalysis?.matchingDoctors?.length}</p>
+                  <div className="flex justify-between items-center py-1 bg-blue-50 -mx-2 px-2 rounded">
+                    <span className="font-medium text-blue-700">Position:</span>
+                    <span className="text-blue-700 font-bold text-sm">#{index + 1} in queue</span>
                   </div>
-                  
-                  {debugInfo.queueDoctorAnalysis?.matchingDoctors?.length > 0 && (
-                    <div>
-                      <h4 className="font-medium text-sky-700">Doctor Matches Found:</h4>
-                      {debugInfo.queueDoctorAnalysis.matchingDoctors.map((match: any, index: number) => (
-                        <p key={index}>• Queue ID: {match.queueDoctorId} → Doctor: {match.doctorName}</p>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {debugInfo.patientQueueSample?.length > 0 && (
-                    <div>
-                      <h4 className="font-medium text-sky-700">Sample Queue Entries:</h4>
-                      {debugInfo.patientQueueSample.slice(0, 3).map((entry: any) => (
-                        <p key={entry.id}>• {entry.patientName} → Dr. {entry.doctorName} (ID: {entry.doctorId})</p>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex justify-between items-start gap-2 py-1 border-t pt-3">
+                    <span className="font-medium text-gray-700 flex-shrink-0">Waiting since:</span>
+                    <span className="text-gray-600 text-xs text-right leading-relaxed">
+                      {formatDate(entry.createdAt)}
+                    </span>
+                  </div>
                 </div>
               </CardContent>
             </Card>
-          )}
-
-          <div className="space-y-4">
-            {filteredEntries.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No patients waiting</h3>
-                  <p className="text-gray-600">
-                    {queueEntries.filter(entry => entry.status === "confirmed" && entry.queueStatus === "waiting").length === 0 
-                      ? "There are no confirmed patients waiting in the queue."
-                      : "No patients match your search criteria."
-                    }
-                  </p>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Only showing confirmed appointments with waiting status.
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-              filteredEntries.map((entry) => (
-                <Card key={entry._id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <User className="w-5 h-5 text-gray-500" />
-                          <h3 className="text-lg font-medium text-gray-900">{entry.patientName}</h3>
-                          <Badge className="bg-amber-50 text-amber-700 border-amber-200 border">
-                            <div className="flex items-center space-x-1">
-                              <Clock className="w-4 h-4" />
-                              <span>Waiting</span>
-                            </div>
-                          </Badge>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                          <div className="space-y-2">
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <User className="w-4 h-4" />
-                              <span><strong>Doctor:</strong> {entry.doctorName}</span>
-                            </div>
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Hash className="w-4 h-4" />
-                              <span><strong>Appointment Key:</strong> {entry.appointmentKey}</span>
-                            </div>
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Clock className="w-4 h-4" />
-                              <span><strong>Session Time:</strong> {formatTime(entry.sessionStartTime)}</span>
-                            </div>
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <Calendar className="w-4 h-4" />
-                              <span><strong>Created:</strong> {formatDate(entry.createdAt)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex space-x-2 ml-4">
-                        <Button
-                          onClick={() => updateQueueStatus(entry.appointmentKey, "in-session")}
-                          disabled={updatingKey === entry.appointmentKey}
-                          className="bg-sky-500 hover:bg-sky-600 text-white"
-                          size="sm"
-                        >
-                          {updatingKey === entry.appointmentKey ? "Starting..." : "Start Session"}
-                        </Button>
-                        <Button
-                          onClick={() => updateQueueStatus(entry.appointmentKey, "completed")}
-                          disabled={updatingKey === entry.appointmentKey}
-                          className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                          size="sm"
-                        >
-                          {updatingKey === entry.appointmentKey ? "Completing..." : "Check Out"}
-                        </Button>
-                        <Button
-                          onClick={() => updateQueueStatus(entry.appointmentKey, "cancelled")}
-                          disabled={updatingKey === entry.appointmentKey}
-                          variant="outline"
-                          className="border-rose-200 text-rose-600 hover:bg-rose-50"
-                          size="sm"
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
-        </>
+          ))}
+        </div>
       )}
     </div>
   )

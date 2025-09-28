@@ -9,14 +9,57 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loader2, Stethoscope } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
+  const [isCheckingAutoLogin, setIsCheckingAutoLogin] = useState(true)
   const router = useRouter()
+
+  // Check for auto-login on component mount
+  useEffect(() => {
+    const checkAutoLogin = async () => {
+      const sessionToken = localStorage.getItem("sessionToken")
+      const receptionist = localStorage.getItem("receptionist")
+
+      if (sessionToken && receptionist) {
+        try {
+          // Validate session token with backend
+          const response = await fetch("/api/auth/validate-session", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ sessionToken }),
+          })
+
+          if (response.ok) {
+            console.log("Auto-login successful, redirecting to dashboard...")
+            router.push("/dashboard")
+            return
+          } else {
+            // Invalid session, clear stored data
+            localStorage.removeItem("sessionToken")
+            localStorage.removeItem("receptionist")
+            localStorage.removeItem("doctors")
+          }
+        } catch (error) {
+          console.error("Auto-login validation failed:", error)
+          // Clear stored data on network error
+          localStorage.removeItem("sessionToken")
+          localStorage.removeItem("receptionist")
+          localStorage.removeItem("doctors")
+        }
+      }
+
+      setIsCheckingAutoLogin(false)
+    }
+
+    checkAutoLogin()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -34,18 +77,40 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       })
 
-      const data = await response.json()
-      console.log("Login response:", { status: response.status, data })
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get('content-type');
+      let data;
+      
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        // Handle non-JSON responses (HTML error pages, plain text, etc.)
+        const textResponse = await response.text();
+        console.error("Non-JSON response received:", textResponse);
+        
+        // Try to extract meaningful error message
+        if (textResponse.includes('Internal Server Error')) {
+          data = { error: "Server is experiencing issues. Please try again." };
+        } else if (textResponse.includes('404')) {
+          data = { error: "Login service not found. Please check server status." };
+        } else {
+          data = { error: "Server error. Please try again later." };
+        }
+      }
+      
+      console.log("Login response:", { status: response.status, data, contentType });
 
-      if (response.ok) {
+      if (response.ok && data.success) {
         console.log("Login successful, storing data and redirecting...")
-        // Store user data in localStorage
+        // Store user data and session token in localStorage
         localStorage.setItem("receptionist", JSON.stringify(data.receptionist))
         localStorage.setItem("doctors", JSON.stringify(data.doctors))
+        localStorage.setItem("sessionToken", data.sessionToken)
 
         console.log("Data stored in localStorage:", {
           receptionist: data.receptionist,
-          doctors: data.doctors
+          doctors: data.doctors,
+          sessionToken: data.sessionToken
         })
 
         // Small delay to ensure localStorage is written
@@ -59,14 +124,32 @@ export default function LoginPage() {
       }
     } catch (error) {
       console.error("Network error during login:", error)
-      if (error instanceof TypeError && error.message.includes('fetch')) {
+      
+      // Better error handling for different error types
+      if (error instanceof SyntaxError && error.message.includes('JSON')) {
+        setError("Server returned invalid response. Please try again or contact support.")
+      } else if (error instanceof TypeError && error.message.includes('fetch')) {
         setError("Cannot connect to server. Please check if the server is running.")
+      } else if (error instanceof Error && error.message.includes('timeout')) {
+        setError("Login request timed out. Please try again.")
       } else {
-        setError(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        setError(`Login error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`)
       }
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Show loading screen while checking auto-login
+  if (isCheckingAutoLogin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-white via-sky-50 to-teal-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-sky-500 mx-auto mb-4" />
+          <p className="text-slate-600">Checking login status...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
