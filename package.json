@@ -54,8 +54,7 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": "22.x",
-    "npm": "10.x"
+    "node": "22.x"
   },
   "packageManager": "pnpm@10.17.1"
 }
